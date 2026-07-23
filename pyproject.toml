@@ -3,7 +3,7 @@ requires = ["setuptools>=77.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sagapay"
+name = "sagapay-sdk"
 version = "0.4.0"
 description = "Python SDK for SagaPay - The world's first free, non-custodial blockchain payment gateway"
 readme = "README.md"

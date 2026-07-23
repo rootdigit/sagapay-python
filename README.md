@@ -5,7 +5,7 @@ Python SDK for [SagaPay](https://sagapay.net) - the world's first free, non-cust
 ## Installation
 
 ```bash
-pip install sagapay
+pip install sagapay-sdk
 ```
 
 ## Quick Start

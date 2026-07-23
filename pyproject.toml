@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=77.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sagapay"
+version = "0.4.0"
+description = "Python SDK for SagaPay - The world's first free, non-custodial blockchain payment gateway"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "SagaPay Team", email = "support@sagapay.net" },
+]
+maintainers = [
+    { name = "SagaPay Team", email = "support@sagapay.net" },
+]
+keywords = [
+    "blockchain",
+    "payment",
+    "cryptocurrency",
+    "api",
+    "gateway",
+    "sagapay",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Office/Business :: Financial",
+    "Typing :: Typed",
+]
+dependencies = [
+    "requests>=2.34.2",
+    "pydantic>=2.13.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.4",
+    "build>=1.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/rootdigit/sagapay-python"
+Repository = "https://github.com/rootdigit/sagapay-python"
+Issues = "https://github.com/rootdigit/sagapay-python/issues"
+Documentation = "https://sagapay.net/docs"
+
+[tool.setuptools.packages.find]
+include = ["sagapay*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+sagapay = ["py.typed"]

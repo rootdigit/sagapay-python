@@ -30,7 +30,7 @@ class Client:
         self,
         api_key: str,
         api_secret: str,
-        base_url: str = "https://api2.sagapay.net",
+        base_url: str = "https://api2.sagapay.io",
         timeout: int = 30,
     ):
         """Initialize the SagaPay client.

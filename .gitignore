@@ -22,3 +22,12 @@ htmlcov/
 
 # OS files
 .DS_Store
+
+# Secrets and data dumps: never commit these.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.dump
+backups/

@@ -28,9 +28,15 @@ from .exceptions import (
     NetworkError,
     WebhookError,
 )
-from .webhook import WebhookHandler
+from .webhook import (
+    DEFAULT_MAX_AGE_SECONDS,
+    SIGNATURE_HEADER,
+    WebhookHandler,
+    is_ipn_fresh,
+    parse_payload,
+)
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 __all__ = [
     "Client",
     "NetworkType",
@@ -52,4 +58,8 @@ __all__ = [
     "NetworkError",
     "WebhookError",
     "WebhookHandler",
+    "SIGNATURE_HEADER",
+    "DEFAULT_MAX_AGE_SECONDS",
+    "is_ipn_fresh",
+    "parse_payload",
 ]

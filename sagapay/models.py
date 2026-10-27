@@ -177,9 +177,15 @@ class WebhookPayload(BaseModel):
     status: TransactionStatus
     address: str
     network_type: NetworkType = Field(alias="networkType")
+    # What was received: the token symbol, and its contract / mint (None for
+    # the chain's native coin). network_type alone does not tell 100 TRX from
+    # 100 USDT, so check these before crediting.
+    asset: Optional[str] = None
+    contract_address: Optional[str] = Field(default=None, alias="contractAddress")
     amount: str
     udf: Optional[str] = None
     tx_hash: Optional[str] = Field(default=None, alias="txHash")
+    # Set when the transaction completes; unchanged on retries.
     timestamp: datetime
 
 

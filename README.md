@@ -72,8 +72,12 @@ withdrawal = client.create_withdrawal({
     "amount": "10.5",
     "ipn_url": "https://example.com/webhook",
     "udf": "withdrawal-456"
-})
+}, idempotency_key="payout-456")  # Optional, recommended
 ```
+
+Withdrawals need an API key created with **Withdrawals** turned on, which requires two-factor authentication on your account.
+
+Pass an `idempotency_key` (1-128 letters, digits, `-` or `_`) so that a retry after a timeout or network error cannot send the money twice. For 24 hours, a repeat with the same key returns the first withdrawal instead of creating another; while the first request is still running, a repeat fails with a 409 `APIError`. Use one key per payout, such as your own payout id.
 
 ### Check Transaction Status
 
@@ -103,7 +107,7 @@ balance = client.fetch_wallet_balance(
 
 ### Verify IPN
 
-`verify_ipn()` confirms directly with SagaPay that an IPN notification is genuine. It is the primary way to authenticate webhook notifications. Your API credentials are sent in the request body for this endpoint (no authentication headers are used).
+`verify_ipn()` confirms a notification's transaction directly with SagaPay. Check the webhook signature first (see below); this network call is an extra check on top of it. Your API credentials are sent in the request body for this endpoint (no authentication headers are used).
 
 ```python
 from sagapay import IpnType
@@ -121,64 +125,64 @@ if result.verified:
 
 ## Handling Webhooks (IPN)
 
-SagaPay sends webhook notifications to your specified `ipn_url` when a transaction completes. Delivery is at-least-once, so the same notification may be delivered more than once — make your handling idempotent (e.g. skip transaction IDs you have already processed).
+SagaPay sends webhook notifications to your specified `ipn_url` when a transaction completes. Each one carries a signature over the exact raw request body:
 
-The primary way to confirm a notification is genuine is `client.verify_ipn()`, which checks the transaction directly with SagaPay.
+```
+X-Sagapay-Merchant-Signature: sha256=<hex HMAC-SHA256 of the raw body>
+```
 
-In addition, each webhook request carries an `X-Sagapay-Signature: sha256=<hex digest>` header — an HMAC-SHA256 of the exact raw request body, keyed with a platform-issued IPN secret (this is NOT your API secret). If SagaPay has issued you an IPN secret, pass it to `WebhookHandler` to verify the header; if you have none, leave it unset and signature verification is skipped.
+It is keyed with your **signing secret**. Copy it from the dashboard: **Webhooks → Signing secret**. It is not your API secret, and nobody else's secret can produce a valid signature for your notifications. `WebhookHandler` requires it and rejects any notification whose signature does not match.
 
 ```python
-from flask import Flask, request, jsonify
-from sagapay import Client, IpnType, TransactionStatus, WebhookHandler
+import os
+
+from flask import Flask, request
+from sagapay import IpnType, SIGNATURE_HEADER, WebhookError, WebhookHandler
 
 app = Flask(__name__)
 
-client = Client(api_key="your-api-key", api_secret="your-api-secret")
-
-# ipn_secret is the OPTIONAL platform-issued IPN secret (NOT your API secret).
-# Leave it unset (None) if you have none -- signature verification is skipped.
-webhook_handler = WebhookHandler(ipn_secret="your-ipn-secret")
+webhook_handler = WebhookHandler(
+    os.environ["SAGAPAY_SIGNING_SECRET"],  # Webhooks -> Signing secret
+    max_age_seconds=24 * 60 * 60,          # Optional: refuse notifications older than a day
+)
 
 @app.route("/webhook", methods=["POST"])
 def handle_webhook():
-    # Get the signature from the headers, e.g. "sha256=<hex digest>"
-    signature = request.headers.get("X-Sagapay-Signature")
-
-    # Get the exact raw request body (required for signature verification)
-    payload = request.get_data()
-
     try:
-        # Parse the payload (the signature is verified only when an
-        # ipn_secret is configured)
-        webhook = webhook_handler.process_webhook(payload, signature)
-
-        # Primary check: confirm the notification with SagaPay
-        verification = client.verify_ipn(
-            txn_hash=webhook.tx_hash,
-            type=webhook.type,
-            amount=webhook.amount,
-            address=webhook.address,
+        # The exact raw body: the signature is computed over these bytes.
+        webhook = webhook_handler.process_webhook(
+            request.get_data(), request.headers.get(SIGNATURE_HEADER)
         )
-        if not verification.verified:
-            return jsonify({"received": False, "error": "IPN not verified"}), 200
+    except WebhookError:
+        return "Invalid webhook", 401
 
-        # Handle the transaction (delivery is at-least-once -- be idempotent)
-        if webhook.status == TransactionStatus.COMPLETED:
-            if webhook.type == IpnType.DEPOSIT:
-                # Handle successful deposit
-                update_order_status(webhook.udf, "paid")
-            else:
-                # Handle successful withdrawal
-                update_withdrawal_status(webhook.udf, "completed")
+    # Process each id once. Delivery is at-least-once, and a replayed
+    # request carries a valid signature too.
+    if not mark_processed(webhook.id):  # e.g. INSERT ... ON CONFLICT DO NOTHING
+        return "OK", 200
 
-        # Return a success response
-        return jsonify({"received": True}), 200
+    if webhook.type == IpnType.DEPOSIT:
+        # Check what arrived before you credit it.
+        credit_order(webhook.udf, webhook.asset, webhook.contract_address, webhook.amount)
+    else:
+        mark_payout_sent(webhook.udf, webhook.tx_hash)
 
-    except Exception as e:
-        # Log the error and return a response
-        # Still return 200 to prevent retries
-        return jsonify({"received": False, "error": str(e)}), 200
+    # Answer 2xx within 20 seconds. If your own processing fails, let the
+    # request fail (5xx) so SagaPay retries it.
+    return "OK", 200
 ```
+
+The old `X-Sagapay-Signature` header was keyed with a secret shared by every merchant. It is retired: SagaPay no longer sends it, and this SDK no longer accepts it.
+
+`parse_payload()` parses a body without checking its signature. Use it only for bodies you have already verified or stored.
+
+### Replay protection
+
+A captured webhook still has a valid signature, so the signature alone does not stop someone resending it. Protect against that:
+
+- **Process each `id` once.** Record the ids you have handled (a unique column works) and answer duplicates with a 200 without acting on them again. This is the main defence and also covers normal retries.
+- **Optionally check the age** with `max_age_seconds` on the handler, or `is_ipn_fresh(webhook, max_age_seconds)`. Keep the limit above the retry schedule (about 7.5 hours): retries reuse the original `timestamp`. A notification you resend from the dashboard also keeps it, so a resend older than your limit will be refused.
+- **Check what you are crediting.** Match `asset`, `contract_address`, `amount` and `address` against the order before you fulfil it.
 
 ## Webhook Payload Format
 
@@ -191,6 +195,8 @@ When SagaPay sends a webhook to your endpoint, it will include the following pay
   "status": "COMPLETED",
   "address": "0x123abc...",
   "networkType": "ERC20|BEP20|TRC20|POLYGON|SOLANA",
+  "asset": "USDT",
+  "contractAddress": "0x55d398326f99059fF775485246999027B3197955",
   "amount": "10.5",
   "udf": "your-optional-user-defined-field",
   "txHash": "0xabc123...",
@@ -202,7 +208,10 @@ Notes:
 
 - `type` is uppercase (`DEPOSIT` or `WITHDRAWAL`) and parses to `IpnType`.
 - `status` is currently always `COMPLETED` — notifications are only sent when a transaction completes.
+- `asset` and `contractAddress` (`contract_address` in Python) say what was received; `contractAddress` is `null` for the chain's native coin. `networkType` alone does not tell 100 TRX from 100 USDT.
 - `udf` and `txHash` may be `null`.
+- `timestamp` is set when the transaction completes and does not change on retries.
+- SagaPay makes up to 6 delivery attempts, retrying after 1 min, 5 min, 15 min, 1 h and 6 h.
 
 ## Error Handling
 

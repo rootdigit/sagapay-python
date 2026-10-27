@@ -85,12 +85,21 @@ class Client:
         return self._post("/create-deposit", params.dict(exclude_none=True), DepositResponse)
 
     def create_withdrawal(
-        self, params: Union[Dict[str, Any], CreateWithdrawalParams]
+        self,
+        params: Union[Dict[str, Any], CreateWithdrawalParams],
+        idempotency_key: Optional[str] = None,
     ) -> WithdrawalResponse:
         """Create a withdrawal request.
-        
+
+        The API key must have withdrawals enabled, which requires two-factor
+        authentication on your account.
+
         Args:
             params: Parameters for creating a withdrawal
+            idempotency_key: Sent as the Idempotency-Key header: 1-128
+                letters, digits, '-' or '_'. Retrying with the same key
+                within 24 hours returns the first request's withdrawal
+                instead of creating a second one. Use one key per payout.
         
         Returns:
             WithdrawalResponse: Response containing withdrawal information
@@ -111,7 +120,13 @@ class Client:
                     raise ValidationError(message, field)
                 raise ValidationError(str(e))
 
-        return self._post("/create-withdrawal", params.dict(exclude_none=True), WithdrawalResponse)
+        headers = {"Idempotency-Key": idempotency_key} if idempotency_key is not None else None
+        return self._post(
+            "/create-withdrawal",
+            params.dict(exclude_none=True),
+            WithdrawalResponse,
+            headers=headers,
+        )
 
     def check_transaction_status(
         self,
@@ -265,6 +280,7 @@ class Client:
         data: Dict[str, Any],
         response_type: Type[T],
         auth_headers: bool = True,
+        headers: Optional[Dict[str, str]] = None,
     ) -> T:
         """Send a POST request to the API.
 
@@ -273,6 +289,7 @@ class Client:
             data: Request body data
             response_type: Response model type
             auth_headers: Whether to send the x-api-key/x-api-secret headers
+            headers: Extra request headers
 
         Returns:
             The response model instance
@@ -282,7 +299,12 @@ class Client:
             NetworkError: If the request fails
         """
         return self._request(
-            "POST", path, json=data, response_type=response_type, auth_headers=auth_headers
+            "POST",
+            path,
+            json=data,
+            response_type=response_type,
+            auth_headers=auth_headers,
+            headers=headers,
         )
 
     def _request(
@@ -293,6 +315,7 @@ class Client:
         params: Optional[Dict[str, Any]] = None,
         json: Optional[Dict[str, Any]] = None,
         auth_headers: bool = True,
+        headers: Optional[Dict[str, str]] = None,
     ) -> T:
         """Send a request to the API.
 
@@ -304,6 +327,7 @@ class Client:
             json: JSON body data
             auth_headers: Whether to send the x-api-key/x-api-secret headers
                 (verify-ipn sends credentials in the body instead)
+            headers: Extra request headers
 
         Returns:
             The response model instance
@@ -313,23 +337,32 @@ class Client:
             NetworkError: If the request fails
         """
         url = f"{self.base_url}{path}"
-        headers = {
+        request_headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
+            **(headers or {}),
         }
         if auth_headers:
-            headers["x-api-key"] = self.api_key
-            headers["x-api-secret"] = self.api_secret
+            request_headers["x-api-key"] = self.api_key
+            request_headers["x-api-secret"] = self.api_secret
 
         try:
             response = self.session.request(
                 method=method,
                 url=url,
-                headers=headers,
+                headers=request_headers,
                 params=params,
                 json=json,
                 timeout=self.timeout,
+                # The API never redirects. requests would resend the
+                # x-api-key/x-api-secret headers to the new host.
+                allow_redirects=False,
             )
+            if response.is_redirect:
+                raise APIError(
+                    message="Unexpected redirect from the API",
+                    status_code=response.status_code,
+                )
             response.raise_for_status()
             
             try:
